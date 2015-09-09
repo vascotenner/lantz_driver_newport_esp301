@@ -14,7 +14,7 @@
 
 """
 
-from .powermeter1830c import powermeter1830c
-from .motionesp301 import ESP301USB, ESP301GPIB
+from .powermeter1830c import PowerMeter1830c
+from .motionesp301 import ESP301, ESP301Axis
 
-__all__ = ['powermeter1830c', 'ESP301USB', 'ESP301GPIB']
+__all__ = ['PowerMeter1830c', 'ESP301', 'ESP301Axis']

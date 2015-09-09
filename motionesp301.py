@@ -16,11 +16,14 @@
 
 from lantz.feat import Feat
 from lantz.action import Action
-from lantz.serial import SerialDriver
-from lantz.visa import GPIBVisaDriver
+#from lantz.serial import SerialDriver
+from lantz.messagebased import MessageBasedDriver
+from pyvisa import constants
+#from lantz.visa import GPIBVisaDriver
 from lantz import Q_, ureg
 from lantz.processors import convert_to
 import time
+import numpy as np
 
 # Add generic units:
 #ureg.define('unit = unit')
@@ -28,17 +31,39 @@ import time
 #ureg.define('motorstep = step')
 
 
-class ESP301():
-    """ Newport ESP301 motion controller. It assumes all axes to have units mm"""
+class ESP301(MessageBasedDriver):
+    """ Newport ESP301 motion controller. It assumes all axes to have units mm
 
-    RECV_TERMINATION = '\r\n'
-    SEND_TERMINATION = '\r\n'
+    :param scan_axes: Should one detect and add axes to the controller
+    """
+
+    DEFAULTS = {
+                'COMMON': {'write_termination': '\r\n',
+                    'read_termination': '\r\n',},
+                'ASRL':{
+                    'timeout': 4000, #ms
+                    'encoding': 'ascii',
+                    'data_bits': 8,
+                    'baud_rate': 19200,
+                    'parity': constants.Parity.none,
+                    'stop_bits': constants.StopBits.one,
+                    'flow_control': constants.VI_ASRL_FLOW_RTS_CTS,#constants.VI_ASRL_FLOW_NONE,
+                    },
+                }
 
     def initialize(self):
         super().initialize()
 
+        self.scan_axes = True
         self.axes = []
         self.detect_axis()
+
+    @classmethod
+    def via_usb(cls, port, name=None, **kwargs):
+        """Connect to the ESP301 via USB. Internally this goes via serial"""
+        cls.DEFAULTS['ASRL'].update({'baud_rate': 921600})
+        return cls.via_serial(port=port, name=name, **kwargs)
+
 
     @Action()
     def detect_axis(self):
@@ -58,7 +83,24 @@ class ESP301():
                 elif err == 9:  # Axis number out of range
                     self.scan_axes = False
                 else:  # Dunno...
-                    raise
+                    raise Exception(err)
+
+    @Feat()
+    def position(self):
+        return [axis.position for axis in self.axes]
+
+    @position.setter
+    def position(self, pos):
+        """Move to position (x,y,...)"""
+        for p, axis in zip(pos, self.axes):
+            if not p is None:
+                axis._set_position(p, wait=False)
+        for p, axis in zip(pos, self.axes):
+            if not p is None:
+                axis._wait_until_done()
+        pos = [axis.position for axis in self.axes]
+        return pos
+
 
     def finalize(self):
         for axis in self.axes:
@@ -67,52 +109,20 @@ class ESP301():
         super().finalize()
 
 
-class ESP301USB(ESP301,SerialDriver):
-    """ Newport ESP301 motion controller. It assumes all axes to have units mm
-
-    :param scan_axes: Should one detect and add axes to the controller
-    :param port: Which serial port should be used. 0 for Serial (COM1), 2 for USB (COM3)
-    :param usb: True if connection is made by USB
-    :param *args, **kwargs: Passed to lantz.serial.SerialDriver
-    """
-
-    ENCODING = 'ascii'
-    TIMEOUT = 4
-
-    BAUDRATE = 19200
-    BYTESIZE = 8
-    PARITY = 'none'
-    STOPBITS = 1
-
-    #: flow control flags
-    RTSCTS = False
-    DSRDTR = False
-    XONXOFF = False
 
 
-    def __init__(self, scan_axes=True, port=0, usb=True, *args, **kwargs):
-        if usb:
-            self.BAUDRATE = 921600
-        else:
-            self.BAUDRATE = 19200
-
-        super().__init__(port, 4, write_timeout=4, *args, **kwargs)
-
-        self.scan_axes = scan_axes
+#class ESP301GPIB( ESP301, GPIBVisaDriver):
+#    """ Untested!
+#    """
+#    def __init__(self, scan_axes=True, resource_name= 'GPIB0::2::INSTR', *args, **kwargs):
+#        # Read number of axes and add axis objects
+#        self.scan_axes = scan_axes
+#        super().__init__(resource_name=resource_name, *args, **kwargs)
 
 
-class ESP301GPIB( ESP301, GPIBVisaDriver):
-    """ Untested!
-    """
-    def __init__(self, scan_axes=True, resource_name= 'GPIB0::2::INSTR', *args, **kwargs):
-        # Read number of axes and add axis objects
-        self.scan_axes = scan_axes
-        super().__init__(resource_name=resource_name, *args, **kwargs)
-
-
-class ESP301Axis(SerialDriver,object):
+class ESP301Axis(ESP301):
     def __init__(self, parent, num, id, *args, **kwargs):
-        super(ESP301Axis, self).__init__(*args, **kwargs)
+        #super(ESP301Axis, self).__init__(*args, **kwargs)
         self.parent = parent
         self.num = num
         self.id = id
@@ -130,12 +140,12 @@ class ESP301Axis(SerialDriver,object):
     @Action()
     def on(self):
         """Put axis on"""
-        self.parent.send('%dMO' % self.num)
+        self.parent.write('%dMO' % self.num)
 
     @Action()
     def off(self):
         """Put axis on"""
-        self.parent.send('%dMF' % self.num)
+        self.parent.write('%dMF' % self.num)
 
     @Feat(values={True: '1', False: '0'})
     def is_on(self):
@@ -149,11 +159,12 @@ class ESP301Axis(SerialDriver,object):
         """Remap current position to home (0), or to new position
 
         :param val: new position"""
-        self.parent.send('%dDH%f' % (self.num, val))
+        self.parent.write('%dDH%f' % (self.num, val))
 
     @Feat(units='mm')
     def position(self):
-        return float(self.parent.query('%dTP?' % self.num))
+        self._position_cached = float(self.parent.query('%dTP?' % self.num))
+        return self._position_cached
 
     @position.setter
     def position(self, pos):
@@ -199,7 +210,7 @@ class ESP301Axis(SerialDriver,object):
         Move stage to a certain position
         :param pos: New position
         """
-        self.parent.send('%dPA%f' % (self.num, pos))
+        self.parent.write('%dPA%f' % (self.num, pos))
 
     @Feat(units='mm/s')
     def max_velocity(self):
@@ -207,7 +218,7 @@ class ESP301Axis(SerialDriver,object):
 
     @max_velocity.setter
     def max_velocity(self, velocity):
-        self.parent.send('%dVU%f' % (self.num, velocity))
+        self.parent.write('%dVU%f' % (self.num, velocity))
 
     @Feat(units='mm/s')
     def velocity(self):
@@ -219,7 +230,7 @@ class ESP301Axis(SerialDriver,object):
         :param velocity: Set the velocity that the axis should use when moving
         :return:
         """
-        self.parent.send('%dVA%f' % (self.num, velocity))
+        self.parent.write('%dVA%f' % (self.num, velocity))
 
     @Feat(units='mm/s')
     def actual_velocity(self):
@@ -232,7 +243,7 @@ class ESP301Axis(SerialDriver,object):
     @Action()
     def stop(self):
         """Emergency stop"""
-        self.parent.send(u'{0:d}ST'.format(self.num))
+        self.parent.write(u'{0:d}ST'.format(self.num))
 
     @Feat(values={True: '1', False: '0'})
     def motion_done(self):
@@ -269,7 +280,7 @@ class ESP301Axis(SerialDriver,object):
 
     # @units.setter
     # def units(self, val):
-    #     self.parent.send('%SN%' % (self.num, val))
+    #     self.parent.write('%SN%' % (self.num, val))
 
     def _wait_until_done(self):
         #wait_time = convert_to('seconds', on_dimensionless='warn')(self.wait_time)
@@ -289,7 +300,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     lantz.log.log_to_socket(lantz.log.DEBUG)
 
-    with ESP301(args.port) as inst:
+    with ESP301.via_usb(port=args.port) as inst:
         # inst.initialize() # Initialize the communication with the power meter
         # Find the status of all axes:
         for axis in inst.axes:
