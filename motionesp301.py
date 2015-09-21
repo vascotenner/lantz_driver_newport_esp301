@@ -7,8 +7,8 @@
 
     For USB, one first have to install the windows driver from newport.
 
-    :copyright: 2014 by Lantz Authors, see AUTHORS for more details.
-    :license: BSD, see LICENSE for more details.
+    :copyright: 2015, see AUTHORS for more details.
+    :license: GPL, see LICENSE for more details.
     
     Source: Instruction Manual (Newport)
 """
@@ -89,8 +89,17 @@ class ESP301(MessageBasedDriver):
     def position(self):
         return [axis.position for axis in self.axes]
 
+    @Feat()
+    def _position_cached(self):
+        return [axis._position_cached for axis in self.axes]
+
     @position.setter
     def position(self, pos):
+        """Move to position (x,y,...)"""
+        return self._position(pos, read_pos=True)
+
+    @Action()
+    def _position(self, pos, read_pos=False):
         """Move to position (x,y,...)"""
         for p, axis in zip(pos, self.axes):
             if not p is None:
@@ -98,9 +107,13 @@ class ESP301(MessageBasedDriver):
         for p, axis in zip(pos, self.axes):
             if not p is None:
                 axis._wait_until_done()
-        pos = [axis.position for axis in self.axes]
+        if read_pos:
+            pos = [axis.position for axis in self.axes]
+        else:
+            for p, axis in zip(pos, self.axes):
+                if not p is None:
+                    axis._position_cached = pos
         return pos
-
 
     def finalize(self):
         for axis in self.axes:
@@ -126,9 +139,10 @@ class ESP301Axis(ESP301):
         self.parent = parent
         self.num = num
         self.id = id
-        self.wait_time = 0.1 # in seconds * Q_(1, 's')
+        self.wait_time = 0.01 # in seconds * Q_(1, 's')
         self.backlash = 0
         self.wait_until_done = True
+        self.position
 
     def __del__(self):
         self.parent = None
@@ -162,6 +176,14 @@ class ESP301Axis(ESP301):
         self.parent.write('%dDH%f' % (self.num, val))
 
     @Feat(units='mm')
+    def _position_cached(self):
+        return self.__position_cached
+    
+    @_position_cached.setter
+    def _position_cached(self, pos):
+        self.__position_cached = pos
+
+    @Feat(units='mm')
     def position(self):
         self._position_cached = float(self.parent.query('%dTP?' % self.num))
         return self._position_cached
@@ -193,12 +215,13 @@ class ESP301Axis(ESP301):
             wait = self.wait_until_done
 
         # First do move to extra position if necessary
-        position = self.position
-        if ( self.backlash < 0 and position > pos) or\
-                ( self.backlash > 0 and position < pos):
-            self.__set_position(pos + self.backlash)
-            if wait:
-                self._wait_until_done()
+        if self.backlash:
+          position = self.position
+          if ( self.backlash < 0 and position > pos) or\
+                  ( self.backlash > 0 and position < pos):
+              self.__set_position(pos + self.backlash)
+              if wait:
+                  self._wait_until_done()
 
         # Than move to final position
         self.__set_position(pos)
@@ -247,7 +270,13 @@ class ESP301Axis(ESP301):
 
     @Feat(values={True: '1', False: '0'})
     def motion_done(self):
-        return self.parent.query('%dMD?' % self.num)
+        while True:
+            ret = self.parent.query('%dMD?' % self.num)
+            if ret in ['1','0']:
+                break
+            else:
+                time.sleep(self.wait_time)
+        return ret
 
     # Not working yet, see https://github.com/hgrecco/lantz/issues/35
     # @Feat(values={Q_('encodercount'): 0,
@@ -284,6 +313,7 @@ class ESP301Axis(ESP301):
 
     def _wait_until_done(self):
         #wait_time = convert_to('seconds', on_dimensionless='warn')(self.wait_time)
+        time.sleep(self.wait_time)
         while not self.motion_done:
             time.sleep(self.wait_time) #wait_time.magnitude)
 
