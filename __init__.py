@@ -9,12 +9,11 @@
 
     ---
 
-    :copyright: 2015 by Lantz Authors, see AUTHORS for more details.
-    :license: BSD,
+    :copyright: 2015, see AUTHORS for more details.
+    :license: GPLv3,
 
 """
 
-from .powermeter1830c import PowerMeter1830c
 from .motionesp301 import ESP301, ESP301Axis
 
-__all__ = ['PowerMeter1830c', 'ESP301', 'ESP301Axis']
+__all__ = ['ESP301', 'ESP301Axis']
