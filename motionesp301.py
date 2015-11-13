@@ -24,6 +24,7 @@ from lantz import Q_, ureg
 from lantz.processors import convert_to
 import time
 import numpy as np
+import copy
 
 # Add generic units:
 #ureg.define('unit = unit')
@@ -61,6 +62,7 @@ class ESP301(MessageBasedDriver):
     @classmethod
     def via_usb(cls, port, name=None, **kwargs):
         """Connect to the ESP301 via USB. Internally this goes via serial"""
+        cls.DEFAULTS = copy.deepcopy(cls.DEFAULTS)
         cls.DEFAULTS['ASRL'].update({'baud_rate': 921600})
         return cls.via_serial(port=port, name=name, **kwargs)
 
@@ -85,11 +87,11 @@ class ESP301(MessageBasedDriver):
                 else:  # Dunno...
                     raise Exception(err)
 
-    @Feat()
+    @Feat(read_once=False)
     def position(self):
         return [axis.position for axis in self.axes]
 
-    @Feat()
+    @Feat(read_once=False)
     def _position_cached(self):
         return [axis._position_cached for axis in self.axes]
 
@@ -175,7 +177,7 @@ class ESP301Axis(ESP301):
         :param val: new position"""
         self.parent.write('%dDH%f' % (self.num, val))
 
-    @Feat(units='mm')
+    @Feat(units='mm', read_once=False)
     def _position_cached(self):
         return self.__position_cached
     
@@ -185,7 +187,7 @@ class ESP301Axis(ESP301):
 
     @Feat(units='mm')
     def position(self):
-        self._position_cached = float(self.parent.query('%dTP?' % self.num))
+        self._position_cached = float(self.parent.query('%dTP?' % self.num))*ureg.mm
         return self._position_cached
 
     @position.setter
@@ -216,12 +218,16 @@ class ESP301Axis(ESP301):
 
         # First do move to extra position if necessary
         if self.backlash:
-          position = self.position
-          if ( self.backlash < 0 and position > pos) or\
-                  ( self.backlash > 0 and position < pos):
-              self.__set_position(pos + self.backlash)
-              if wait:
-                  self._wait_until_done()
+            position = self.position.magnitude
+            #backlash = self.backlash.to('mm').magnitude
+            backlash = convert_to('mm', on_dimensionless='ignore')(self.backlash)
+            if ( backlash < 0 and position > pos) or\
+                ( backlash > 0 and position < pos):
+
+                self.log_info('Using backlash')
+                self.__set_position(pos + backlash)
+                if wait:
+                    self._wait_until_done()
 
         # Than move to final position
         self.__set_position(pos)
@@ -242,6 +248,15 @@ class ESP301Axis(ESP301):
     @max_velocity.setter
     def max_velocity(self, velocity):
         self.parent.write('%dVU%f' % (self.num, velocity))
+    
+    @Feat(units='mm/s**2')
+    def max_acceleration(self):
+        return float(self.parent.query('%dAU?' % self.num))
+
+    @max_acceleration.setter
+    def max_acceleration(self, velocity):
+        self.parent.write('%dAU%f' % (self.num, velocity))
+
 
     @Feat(units='mm/s')
     def velocity(self):
@@ -254,6 +269,18 @@ class ESP301Axis(ESP301):
         :return:
         """
         self.parent.write('%dVA%f' % (self.num, velocity))
+    
+    @Feat(units='mm/s**2')
+    def acceleration(self):
+        return float(self.parent.query('%dVA?' % self.num))
+
+    @acceleration.setter
+    def acceleration(self, acceleration):
+        """
+        :param acceleration: Set the acceleration that the axis should use when starting
+        :return:
+        """
+        self.parent.write('%dAC%f' % (self.num, acceleration))
 
     @Feat(units='mm/s')
     def actual_velocity(self):
