@@ -84,6 +84,8 @@ class ESP301(MessageBasedDriver):
                     self.axes.append(None)
                 elif err == 9:  # Axis number out of range
                     self.scan_axes = False
+                elif err == 6:  # Axis number out of range, but wrong errorcode
+                    self.scan_axes = False
                 else:  # Dunno...
                     raise Exception(err)
 
@@ -220,7 +222,7 @@ class ESP301Axis(ESP301):
         if self.backlash:
             position = self.position.magnitude
             #backlash = self.backlash.to('mm').magnitude
-            backlash = convert_to('mm', on_dimensionless='ignore')(self.backlash)
+            backlash = convert_to('mm', on_dimensionless='ignore')(self.backlash).magnitude
             if ( backlash < 0 and position > pos) or\
                 ( backlash > 0 and position < pos):
 
