@@ -215,8 +215,6 @@ class ESP301Axis(ESP301):
         :param pos: New position in mm
         :param wait: wait until stage is finished
         """
-        if wait is None:
-            wait = self.wait_until_done
 
         # First do move to extra position if necessary
         if self.backlash:
@@ -228,8 +226,7 @@ class ESP301Axis(ESP301):
 
                 self.log_info('Using backlash')
                 self.__set_position(pos + backlash)
-                if wait:
-                    self._wait_until_done()
+                self._wait_until_done()
 
         # Than move to final position
         self.__set_position(pos)
