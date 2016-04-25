@@ -54,9 +54,6 @@ class ESP301(MessageBasedDriver):
 
     def initialize(self):
         super().initialize()
-
-        self.scan_axes = True
-        self.axes = []
         self.detect_axis()
 
     @classmethod
@@ -69,10 +66,14 @@ class ESP301(MessageBasedDriver):
 
     @Action()
     def detect_axis(self):
-        """ Find the number of axis available """
-        i = 0
+        """ Find the number of axis available.
+        
+        The detection stops as soon as an empty controller is found.
+        """
         self.axes = []
-        while self.scan_axes:
+        i = 0
+        scan_axes = True
+        while scan_axes:
             try:
                 i += 1
                 id = self.query('%dID?' % i)
@@ -83,9 +84,9 @@ class ESP301(MessageBasedDriver):
                 if err == 37:  # Axis number missing
                     self.axes.append(None)
                 elif err == 9:  # Axis number out of range
-                    self.scan_axes = False
+                    scan_axes = False
                 elif err == 6:  # Axis number out of range, but wrong errorcode
-                    self.scan_axes = False
+                    scan_axes = False
                 else:  # Dunno...
                     raise Exception(err)
 
