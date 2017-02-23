@@ -106,23 +106,24 @@ class ESP301(MessageBasedDriver):
     @position.setter
     def position(self, pos):
         """Move to position (x,y,...)"""
-        return self._position(pos, read_pos=True)
+        return self._position(pos)
 
     @Action()
-    def _position(self, pos, read_pos=False):
+    def _position(self, pos, read_pos=None, wait_until_done=True):
         """Move to position (x,y,...)"""
+        if read_pos is not None:
+            self.log_error('kwargs read_pos for function _position is deprecated')
+
         for p, axis in zip(pos, self.axes):
             if not p is None:
                 axis._set_position(p, wait=False)
-        for p, axis in zip(pos, self.axes):
-            if not p is None:
-                axis._wait_until_done()
-        if read_pos:
-            pos = [axis.position for axis in self.axes]
-        else:
+        if wait_until_done:
             for p, axis in zip(pos, self.axes):
                 if not p is None:
-                    axis._position_cached = pos
+                    axis._wait_until_done()
+                    axis.check_position(p)
+            return self.position
+
         return pos
     
     @Action()
@@ -156,6 +157,8 @@ class ESP301Axis(ESP301):
         self.wait_time = 0.01 # in seconds * Q_(1, 's')
         self.backlash = 0
         self.wait_until_done = True
+        self.accuracy = 0.001 # in units reported by axis
+        # Fill position cache:
         self.position
 
     def __del__(self):
@@ -209,6 +212,9 @@ class ESP301Axis(ESP301):
 
         :param pos: new position
         """
+        if not self.is_on:
+            self.log_error('Axis not enabled. Not moving!')
+            return
 
         # First do move to extra position if necessary
         self._set_position(pos, wait=self.wait_until_done)
@@ -242,6 +248,7 @@ class ESP301Axis(ESP301):
         self.__set_position(pos)
         if wait:
             self._wait_until_done()
+            self.check_position(pos)
 
     def __set_position(self, pos):
         """
@@ -249,6 +256,14 @@ class ESP301Axis(ESP301):
         :param pos: New position
         """
         self.parent.write('%dPA%f' % (self.num, pos))
+
+    def check_position(self, pos):
+        '''Check is stage is at expected position'''
+        if np.isclose(self.position, pos, atol=self.accuracy):
+            return True
+        self.log_error('Position accuracy {} is not reached.'
+            'Expected: {}, measured: {}'.format(self.accuracy, pos, self._position_cached))
+        return False
 
     @Feat(units='mm/s')
     def max_velocity(self):
