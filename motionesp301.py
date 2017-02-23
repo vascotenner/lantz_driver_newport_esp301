@@ -3,7 +3,8 @@
     lantz.drivers.newport.motionesp301
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    Implements the drivers to control an ESP301 motion controller via USB or serial.
+    Implements the drivers to control ESP300 and ESP301 motion controller 
+    via USB or serial.
 
     For USB, one first have to install the windows driver from newport.
 
@@ -80,7 +81,7 @@ class ESP301(MessageBasedDriver):
                 axis = ESP301Axis(self, i, id)
                 self.axes.append(axis)
             except:
-                err = int(self.query('TE?'))
+                err = self.get_errors()
                 if err == 37:  # Axis number missing
                     self.axes.append(None)
                 elif err == 9:  # Axis number out of range
@@ -89,7 +90,11 @@ class ESP301(MessageBasedDriver):
                     scan_axes = False
                 else:  # Dunno...
                     raise Exception(err)
-
+    @Action()
+    def get_errors(self):
+        err = int(self.query('TE?'))
+        return err
+ 
     @Feat(read_once=False)
     def position(self):
         return [axis.position for axis in self.axes]
@@ -119,7 +124,11 @@ class ESP301(MessageBasedDriver):
                 if not p is None:
                     axis._position_cached = pos
         return pos
-
+    
+    @Action()
+    def motion_done(self):
+        for axis in self.axes: axis._wait_until_done()
+                
     def finalize(self):
         for axis in self.axes:
             if axis is not None:
@@ -202,7 +211,7 @@ class ESP301Axis(ESP301):
         """
 
         # First do move to extra position if necessary
-        self._set_position(pos)
+        self._set_position(pos, wait=self.wait_until_done)
 
     @Action(units=['mm',None])
     def _set_position(self, pos, wait=None):
