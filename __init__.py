@@ -15,5 +15,6 @@
 """
 
 from .motionesp301 import ESP301, ESP301Axis
+from .motionsmc100 import SMC100
 
-__all__ = ['ESP301', 'ESP301Axis']
+__all__ = ['ESP301', 'ESP301Axis', 'SMC100']
