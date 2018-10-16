@@ -29,7 +29,7 @@ import numpy as np
 # ureg.define('motorstep = step')
 
 
-class MotionController(MessageBasedDriver):
+class MotionControllerBase(MessageBasedDriver):
     """ Newport motion controller. It assumes all axes to have units mm
 
     """
@@ -48,6 +48,8 @@ class MotionController(MessageBasedDriver):
                     },
                 }
 
+
+class MotionController(MotionControllerBase):
     def initialize(self):
         super().initialize()
 
@@ -111,7 +113,7 @@ class MotionController(MessageBasedDriver):
         super().finalize()
 
 
-class MotionAxis(MotionController):
+class MotionAxis(MotionControllerBase):
     def __init__(self, parent, num, id, *args, **kwargs):
         self.parent = parent
         self.num = num
@@ -180,15 +182,11 @@ class MotionAxis(MotionController):
 
         :param pos: new position
         """
-        if not self.is_on:
-            self.log_error('Axis not enabled. Not moving!')
-            return
-
         # First do move to extra position if necessary
         self._set_position(pos, wait=self.wait_until_done)
 
-    @Action(units=['mm', None])
-    def _set_position(self, pos, wait=None):
+    @Action(units=['mm', None, None])
+    def _set_position(self, pos, wait=None, force=False):
         """
         Move to an absolute position, taking into account backlash.
 
@@ -198,7 +196,21 @@ class MotionAxis(MotionController):
 
         :param pos: New position in mm
         :param wait: wait until stage is finished
+        :param force: Do not check if pos is close to current position
         """
+
+        if not self.is_on:
+            self.log_error('Axis not enabled. Not moving!')
+            return
+
+        # Check if setting position is really nececcary
+        current_value = self.refresh('position')
+        if not force and np.isclose(pos, current_value, atol=self.accuracy):
+            self.log_info('No need to set {} = {} (current={}, force={}, '
+                              'accuracy={})', 
+                              'position', pos, current_value, force, 
+                              self.accuracy)
+            return
 
         # First do move to extra position if necessary
         if self.backlash:
@@ -238,22 +250,6 @@ class MotionAxis(MotionController):
         return False
 
     @Feat(units='mm/s')
-    def max_velocity(self):
-        return float(self.query('VU?'))
-
-    @max_velocity.setter
-    def max_velocity(self, velocity):
-        self.write('VU%f' % (velocity))
-
-    @Feat(units='mm/s**2')
-    def max_acceleration(self):
-        return float(self.query('AU?'))
-
-    @max_acceleration.setter
-    def max_acceleration(self, velocity):
-        self.write('AU%f' % (velocity))
-
-    @Feat(units='mm/s')
     def velocity(self):
         return float(self.query('VA?'))
 
@@ -278,14 +274,6 @@ class MotionAxis(MotionController):
         """
         self.write('AC%f' % (acceleration))
 
-    @Feat(units='mm/s')
-    def actual_velocity(self):
-        return float(self.query('TV'))
-
-    @actual_velocity.setter
-    def actual_velocity(self, val):
-        raise NotImplementedError
-
     @Action()
     def stop(self):
         """Emergency stop"""
@@ -308,22 +296,22 @@ class MotionAxis(MotionController):
     #                     Q_('radian'): 9,
     #                     Q_('milliradian'): 10,
     #                     Q_('microradian'): 11})
-    @Feat()
-    def units(self):
-        ret = int(self.query(u'SN?'))
-        vals = {0 :'encoder count',
-                1 :'motor step',
-                2 :'millimeter',
-                3 :'micrometer',
-                4 :'inches',
-                5 :'milli-inches',
-                6 :'micro-inches',
-                7 :'degree',
-                8 :'gradian',
-                9 :'radian',
-                10:'milliradian',
-                11:'microradian',}
-        return vals[ret]
+    #@Feat()
+    #def units(self):
+    #    ret = int(self.query(u'SN?'))
+    #    vals = {0 :'encoder count',
+    #            1 :'motor step',
+    #            2 :'millimeter',
+    #            3 :'micrometer',
+    #            4 :'inches',
+    #            5 :'milli-inches',
+    #            6 :'micro-inches',
+    #            7 :'degree',
+    #            8 :'gradian',
+    #            9 :'radian',
+    #            10:'milliradian',
+    #            11:'microradian',}
+    #    return vals[ret]
 
     # @units.setter
     # def units(self, val):
